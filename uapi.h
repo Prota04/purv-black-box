@@ -16,6 +16,7 @@ typedef struct {
 } lsm9ds1_raw_vector_t;
 
 typedef struct {
+    __u64 timestamp_ns;
     lsm9ds1_raw_vector_t accel_raw;
     lsm9ds1_raw_vector_t gyro_raw;
 } lsm9ds1_raw_sample_t;
