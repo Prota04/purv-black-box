@@ -340,7 +340,6 @@ int main(int argc, char **argv)
         float angular_speed_rad;
         float angular_speed_deg;
 
-        uint64_t timestamp_ns;
         int accel_reliable;
         int sleep_result;
 
@@ -358,7 +357,7 @@ int main(int argc, char **argv)
             break;
         }
 
-        timestamp_ns = elapsed_nanoseconds(
+        raw_sample.timestamp_ns = elapsed_nanoseconds(
             &start_time,
             &sample_time
         );
@@ -476,7 +475,7 @@ int main(int argc, char **argv)
             "%" PRIu64 ",%.6f,%.6f,%.6f,%.6f,"
             "%.6f,%.6f,%.6f,%.3f,"
             "%.3f,%.3f,%.3f,%d,%d\n",
-            timestamp_ns,
+            raw_sample.timestamp_ns,
             sample.accel_g.x,
             sample.accel_g.y,
             sample.accel_g.z,
@@ -527,7 +526,7 @@ int main(int argc, char **argv)
         sample_number++;
 
         if (duration_seconds > 0 &&
-            timestamp_ns >=
+            raw_sample.timestamp_ns >=
                 (uint64_t)duration_seconds * 1000000000ULL) {
             break;
         }
