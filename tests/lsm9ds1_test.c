@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "lsm9ds1.h"
+#include "uapi.h"
 
 #include <errno.h>
 #include <math.h>
@@ -141,6 +142,7 @@ int main(int argc, char **argv)
 
     while (keep_running) {
         lsm9ds1_sample_t sample;
+        lsm9ds1_raw_sample_t raw_sample;
 
         float total_g;
         float roll;
@@ -153,7 +155,7 @@ int main(int argc, char **argv)
         /*
          * Read one accelerometer and gyroscope sample.
          */
-        if (lsm9ds1_read_sample(fd, &sample) < 0) {
+        if (lsm9ds1_read_sample(fd, &sample, &raw_sample) < 0) {
             fprintf(stderr,
                     "Sensor read failed: %s\n",
                     strerror(errno));
@@ -275,9 +277,9 @@ int main(int argc, char **argv)
                 "ACCEL raw=(%6d, %6d, %6d) "
                 "g=(%7.3f, %7.3f, %7.3f) "
                 "total=%6.3f g\n",
-                sample.accel_raw.x,
-                sample.accel_raw.y,
-                sample.accel_raw.z,
+                raw_sample.accel_raw.x,
+                raw_sample.accel_raw.y,
+                raw_sample.accel_raw.z,
                 sample.accel_g.x,
                 sample.accel_g.y,
                 sample.accel_g.z,
@@ -289,9 +291,9 @@ int main(int argc, char **argv)
                 "rad/s=(%7.3f, %7.3f, %7.3f) "
                 "angular_speed=%7.2f deg/s "
                 "rapid_rotation=%d\n",
-                sample.gyro_raw.x,
-                sample.gyro_raw.y,
-                sample.gyro_raw.z,
+                raw_sample.gyro_raw.x,
+                raw_sample.gyro_raw.y,
+                raw_sample.gyro_raw.z,
                 sample.gyro_rad_s.x,
                 sample.gyro_rad_s.y,
                 sample.gyro_rad_s.z,

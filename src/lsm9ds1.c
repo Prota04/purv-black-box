@@ -184,28 +184,25 @@ int lsm9ds1_read_gyro_raw(int fd, lsm9ds1_raw_vector_t *raw)
     return read_raw_vector(fd, REG_OUT_X_L_G, raw);
 }
 
-int lsm9ds1_read_sample(int fd, lsm9ds1_sample_t *sample)
+int lsm9ds1_read_sample(int fd, lsm9ds1_sample_t *sample, lsm9ds1_raw_sample_t *raw_sample)
 {
     if (sample == NULL) {
         errno = EINVAL;
         return -1;
     }
 
-    if (lsm9ds1_read_accel_raw(fd, &sample->accel_raw) < 0 ||
-        lsm9ds1_read_gyro_raw(fd, &sample->gyro_raw) < 0) {
+    if (lsm9ds1_read_accel_raw(fd, &raw_sample->accel_raw) < 0 ||
+        lsm9ds1_read_gyro_raw(fd, &raw_sample->gyro_raw) < 0) {
         return -1;
     }
 
-    sample->accel_g.x = sample->accel_raw.x * ACCEL_G_PER_LSB;
-    sample->accel_g.y = sample->accel_raw.y * ACCEL_G_PER_LSB;
-    sample->accel_g.z = sample->accel_raw.z * ACCEL_G_PER_LSB;
+    sample->accel_g.x = raw_sample->accel_raw.x * ACCEL_G_PER_LSB;
+    sample->accel_g.y = raw_sample->accel_raw.y * ACCEL_G_PER_LSB;
+    sample->accel_g.z = raw_sample->accel_raw.z * ACCEL_G_PER_LSB;
 
-    sample->gyro_rad_s.x =
-        sample->gyro_raw.x * GYRO_DPS_PER_LSB * DEG_TO_RAD;
-    sample->gyro_rad_s.y =
-        sample->gyro_raw.y * GYRO_DPS_PER_LSB * DEG_TO_RAD;
-    sample->gyro_rad_s.z =
-        sample->gyro_raw.z * GYRO_DPS_PER_LSB * DEG_TO_RAD;
+    sample->gyro_rad_s.x = raw_sample->gyro_raw.x * GYRO_DPS_PER_LSB * DEG_TO_RAD;
+    sample->gyro_rad_s.y = raw_sample->gyro_raw.y * GYRO_DPS_PER_LSB * DEG_TO_RAD;
+    sample->gyro_rad_s.z = raw_sample->gyro_raw.z * GYRO_DPS_PER_LSB * DEG_TO_RAD;
 
     return 0;
 }
