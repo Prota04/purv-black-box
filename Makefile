@@ -1,20 +1,68 @@
-CC = gcc
-CFLAGS = -Wall -Iinclude -I.
-BUILD_DIR = build
-TARGET = $(BUILD_DIR)/test_imu
+CROSS_COMPILE := arm-linux-gnueabihf-
+CC := $(CROSS_COMPILE)gcc
 
-SRCS = src/lsm9ds1.c tests/lsm9ds1_test.c
-OBJS = $(SRCS:.c=.o)
+CFLAGS := -Wall -Wextra -Wpedantic -Iinclude -I.
+LDLIBS := -lm
 
-all: $(TARGET)
+BUILD_DIR := build
 
-$(TARGET): $(OBJS)
+IMU_TARGET := $(BUILD_DIR)/test_imu
+DETECTION_TARGET := $(BUILD_DIR)/test_detection
+BUFFER_TARGET := $(BUILD_DIR)/test_crash_buffer
+LED_TARGET := $(BUILD_DIR)/led_sos
+CAMERA_TARGET := $(BUILD_DIR)/camera
+BLACK_BOX_TARGET := $(BUILD_DIR)/black_box
+TASK1_BUFFER_TARGET := $(BUILD_DIR)/test_task1_buffer
+
+all: $(IMU_TARGET) \
+     $(DETECTION_TARGET) \
+     $(BUFFER_TARGET) \
+     $(LED_TARGET) \
+     $(CAMERA_TARGET) \
+     dev
+
+
+$(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
-	$(CC) $(CFLAGS) -o $(TARGET) $(OBJS) -lm
 
-%.o: %.c
-	$(CC) $(CFLAGS) -c $< -o $@
+
+$(IMU_TARGET): src/lsm9ds1.c \
+               src/accident_detection.c \
+               tests/lsm9ds1_test.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDLIBS)
+
+
+$(DETECTION_TARGET): src/accident_detection.c \
+                     tests/accident_detection_test.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDLIBS)
+
+
+$(BUFFER_TARGET): tests/crash_buffer_test.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $^ -o $@
+
+
+$(LED_TARGET): src/led_sos.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $^ -o $@
+
+
+$(CAMERA_TARGET): src/camera.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $^ -o $@
+
+$(BLACK_BOX_TARGET): src/main.c \
+                     src/accident_detection.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDLIBS) -pthread
+
+$(TASK1_BUFFER_TARGET): tests/task1_buffer_test.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $^ -o $@
+
+
+dev:
+	$(MAKE) -C dev
+
 
 clean:
-	rm -f $(OBJS)
 	rm -rf $(BUILD_DIR)
+	$(MAKE) -C dev clean
+
+
+.PHONY: all clean dev
