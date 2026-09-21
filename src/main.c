@@ -2,6 +2,7 @@
 
 #include "uapi.h"
 #include "accident_detection.h"
+#include "task2_camera.h"
 
 #include <pthread.h>
 #include <sched.h>
@@ -15,7 +16,7 @@
 #include <signal.h>
 
 #define LSM9DS1_IMU_PRIORITY 99
-#define EMERGENCY_PRIORITY 95 //FILIP
+#define EMERGENCY_PRIORITY 95 //ZELJANA
 #define SAMPLE_PERIOD_NS (2L * 1000L * 1000L)
 #define TEST_CYCLES 500
 
@@ -178,7 +179,7 @@ static void* imu_task (void* arg)
 
 }
 
-static void *emergency_task(void *arg) // FILIP
+static void *emergency_task(void *arg) // ZELJANA
 {
     sigset_t signal_set;
     int signal_number;
@@ -197,18 +198,13 @@ static void *emergency_task(void *arg) // FILIP
         return NULL;
     }
 
-    /*
-    if (sem_wait(&emergency_sem) < 0)
-    {
-        perror("sem_wait");
-        return NULL;
-    }
-    */
     printf("Task 2 awakened: accident notification received.\n");
 
-    //trigger camera
-    //display SOS
-    //notify Task 3
+    // Poziv funkcija za okidanje kamere i prikaz SOS poruke na LED матрици
+    trigger_camera_capture();
+    display_sos_led_matrix();
+
+    //notify Task 3 
 
     return NULL;
 }
