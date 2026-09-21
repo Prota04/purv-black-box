@@ -48,8 +48,7 @@ $(LED_TARGET): src/led_sos.c | $(BUILD_DIR)
 $(CAMERA_TARGET): src/camera.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) $^ -o $@
 
-$(BLACK_BOX_TARGET): src/main.c \
-                     src/accident_detection.c | $(BUILD_DIR)
+$(BLACK_BOX_TARGET): src/main.c src/lsm9ds1.c src/accident_detection.c src/task2_camera.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDLIBS) -pthread
 
 $(TASK1_BUFFER_TARGET): tests/task1_buffer_test.c | $(BUILD_DIR)

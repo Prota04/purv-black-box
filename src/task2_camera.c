@@ -11,7 +11,7 @@ static pthread_cond_t camera_cond = PTHREAD_COND_INITIALIZER;
 static int accident_flag = 0;
 static accident_event_t current_event = ACCIDENT_EVENT_NONE;
 
-static void trigger_camera_capture(void)
+void trigger_camera_capture(void)
 {
     int result = system(
         "rpicam-still "
@@ -31,7 +31,7 @@ static void trigger_camera_capture(void)
     }
 }
 
-static void display_sos_led_matrix(void)
+void display_sos_led_matrix(void)
 {
     printf("SOS displayed on LED matrix.\n");
 }

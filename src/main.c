@@ -3,6 +3,7 @@
 #include "uapi.h"
 #include "accident_detection.h"
 #include "task2_camera.h"
+#include "lsm9ds1.h"
 
 #include <pthread.h>
 #include <sched.h>
@@ -18,9 +19,15 @@
 #define LSM9DS1_IMU_PRIORITY 99
 #define EMERGENCY_PRIORITY 95 //ZELJANA
 #define SAMPLE_PERIOD_NS (2L * 1000L * 1000L)
-#define TEST_CYCLES 500
+#define TEST_CYCLES 15000
 
 static pthread_t emergency_thread;
+
+typedef struct
+{
+    int imu_fd;
+    int crash_fd;
+} imu_task_args_t;
 
 //static sem_t emergency_sem;
 
@@ -37,7 +44,10 @@ static void add_nanoseconds(struct timespec* time, long nanoseconds)
 
 static void* imu_task (void* arg)
 {
-    int crash_fd = *(int *)arg;
+    imu_task_args_t *args = arg;
+
+    int imu_fd = args->imu_fd;
+    int crash_fd = args->crash_fd;
     struct timespec next_activation;
 
     accident_detector_t detector;
@@ -68,7 +78,8 @@ static void* imu_task (void* arg)
 
         struct timespec sample_time;
         ssize_t written;
-
+        
+        /*
         sample.accel_g.x = 0.0f;
         sample.accel_g.y = 0.0f;
         sample.accel_g.z = 1.0f;
@@ -91,19 +102,13 @@ static void* imu_task (void* arg)
         raw_sample.gyro_raw.x = (__s16)(400 + i);
         raw_sample.gyro_raw.y = (__s16)(500 + i);
         raw_sample.gyro_raw.z = (__s16)(600 + i);
+        */
 
-        /*
-         * REAL SENSOR VERSION:
-         *
-         * When the Sense HAT is available, the temporary
-         * raw and physical values above will be replaced by:
-         *
-         * if (lsm9ds1_read_sample(imu_fd, &sample, &raw_sample) < 0)
-         * {
-         *     perror("lsm9ds1_read_sample");
-         *     break;
-         * }
-         */
+        if (lsm9ds1_read_sample(imu_fd, &sample, &raw_sample) < 0)
+        {
+            perror("lsm9ds1_read_sample");
+            break;
+        }
 
         if(clock_gettime(CLOCK_MONOTONIC, &sample_time) < 0)
         {
@@ -220,11 +225,30 @@ int main()
     int crash_fd;
     sigset_t signal_set;
 
+    int imu_fd;
+    imu_task_args_t imu_args;
+
     crash_fd = open(CRASH_BUFFER_PATH, O_WRONLY);
 
     if(crash_fd < 0)
     {
         perror("open crash_buffer");
+        return EXIT_FAILURE;
+    }
+
+    imu_fd = lsm9ds1_open("/dev/i2c-1");
+    if (imu_fd < 0)
+    {
+        perror("lsm9ds1_open");
+        close(crash_fd);
+        return EXIT_FAILURE;
+    }
+
+    if (lsm9ds1_init(imu_fd) < 0)
+    {
+        perror("lsm9ds1_init");
+        lsm9ds1_close(imu_fd);
+        close(crash_fd);
         return EXIT_FAILURE;
     }
 
@@ -267,11 +291,12 @@ int main()
         return EXIT_FAILURE;
     }
 
-
+    imu_args.imu_fd = imu_fd;
+    imu_args.crash_fd = crash_fd;
     memset(&param, 0, sizeof(param));
     param.sched_priority = LSM9DS1_IMU_PRIORITY;
     pthread_attr_setschedparam(&attr, &param);
-    result = pthread_create(&imu_thread, &attr, imu_task, &crash_fd);
+    result = pthread_create(&imu_thread, &attr, imu_task, &imu_args);
     if(result != 0)
     {
         fprintf(stderr, "pthread_create failed: %s\n", strerror(result));
@@ -287,6 +312,7 @@ int main()
     //sem_destroy(&emergency_sem);
 
     close(crash_fd);
+    lsm9ds1_close(imu_fd);
 
     return EXIT_SUCCESS;
 }
