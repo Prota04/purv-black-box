@@ -200,7 +200,7 @@ static void *emergency_task(void *arg) // ZELJANA
 
     printf("Task 2 awakened: accident notification received.\n");
 
-    // Poziv funkcija za okidanje kamere i prikaz SOS poruke na LED матрици
+    
     trigger_camera_capture();
     display_sos_led_matrix();
 
