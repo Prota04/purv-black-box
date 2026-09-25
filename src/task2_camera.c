@@ -1,27 +1,19 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "task2_camera.h"
-#include <pthread.h>
-#include <sched.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
+
 #include <errno.h>
 #include <fcntl.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #define MATRIX_WIDTH 8
 #define MATRIX_HEIGHT 8
 #define MESSAGE_WIDTH 11
 #define COLOR_RED 0xF800
-
-static pthread_t camera_thread;
-static pthread_mutex_t camera_mutex = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t camera_cond = PTHREAD_COND_INITIALIZER;
-static int accident_flag = 0;
-static accident_event_t current_event = ACCIDENT_EVENT_NONE;
 
 static const uint8_t sos[5][MESSAGE_WIDTH] = {
     {1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1},
@@ -41,8 +33,10 @@ static int open_sense_hat_framebuffer(char *device_path, size_t path_size)
         FILE *name_file;
         int framebuffer;
 
-        snprintf(name_path, sizeof(name_path),
-                 "/sys/class/graphics/fb%d/name", index);
+        snprintf(name_path,
+                 sizeof(name_path),
+                 "/sys/class/graphics/fb%d/name",
+                 index);
 
         name_file = fopen(name_path, "r");
         if (name_file == NULL) {
@@ -87,6 +81,9 @@ static int write_frame(int framebuffer,
         ssize_t written = write(framebuffer, data, remaining);
 
         if (written < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
             return -1;
         }
 
@@ -104,7 +101,8 @@ static void create_scroll_frame(
     int x;
     int y;
 
-    memset(pixels, 0,
+    memset(pixels,
+           0,
            MATRIX_WIDTH * MATRIX_HEIGHT * sizeof(uint16_t));
 
     for (y = 0; y < 5; ++y) {
@@ -127,7 +125,9 @@ int trigger_camera_capture(camera_image_t *image)
         return -1;
     }
 
-    if (camera_capture_snapshot(image, 1000) != 0) {
+    /* The camera is already streaming. This only requests the next fresh
+     * frame from the continuously running camera thread. */
+    if (camera_capture_snapshot(image, 1500) != 0) {
         fprintf(stderr,
                 "Error: camera frame was not captured: %s\n",
                 strerror(errno));
@@ -136,6 +136,7 @@ int trigger_camera_capture(camera_image_t *image)
 
     return 0;
 }
+
 void display_sos_led_matrix(void)
 {
     const struct timespec frame_delay = {
@@ -147,8 +148,8 @@ void display_sos_led_matrix(void)
     int framebuffer;
     int message_x;
 
-    framebuffer = open_sense_hat_framebuffer(
-        framebuffer_path, sizeof(framebuffer_path));
+    framebuffer = open_sense_hat_framebuffer(framebuffer_path,
+                                             sizeof(framebuffer_path));
 
     if (framebuffer < 0) {
         fprintf(stderr,
@@ -158,12 +159,13 @@ void display_sos_led_matrix(void)
     }
 
     for (message_x = MATRIX_WIDTH;
-            message_x >= -MESSAGE_WIDTH;
-            --message_x) {
+         message_x >= -MESSAGE_WIDTH;
+         --message_x) {
         create_scroll_frame(pixels, message_x);
 
         if (write_frame(framebuffer, pixels) < 0) {
-            fprintf(stderr, "LED write failed: %s\n",
+            fprintf(stderr,
+                    "LED write failed: %s\n",
                     strerror(errno));
             close(framebuffer);
             return;
@@ -173,63 +175,6 @@ void display_sos_led_matrix(void)
     }
 
     memset(pixels, 0, sizeof(pixels));
-    write_frame(framebuffer, pixels);
+    (void)write_frame(framebuffer, pixels);
     close(framebuffer);
-}
-
-void *task2_camera_thread_func(void *arg)
-{
-    (void)arg; /* Suppress unused parameter warning */
-
-    struct sched_param param;
-    param.sched_priority = 95;
-    if (pthread_setschedparam(pthread_self(), SCHED_FIFO, &param) != 0) {
-        perror("Failed to set Task 2 SCHED_FIFO priority");
-    }
-
-    while (1) {
-        pthread_mutex_lock(&camera_mutex);
-        while (!accident_flag) {
-            pthread_cond_wait(&camera_cond, &camera_mutex);
-        }
-        
-        accident_event_t event = current_event;
-        accident_flag = 0;
-        pthread_mutex_unlock(&camera_mutex);
-
-        if (event & (ACCIDENT_EVENT_IMPACT | ACCIDENT_EVENT_ROLLOVER)) {
-            camera_image_t image;
-
-            if (trigger_camera_capture(&image) == 0) {
-                printf("Task 2: camera frame captured: %zu bytes\n",
-                       image.size);
-            } else {
-                fprintf(stderr, "Task 2: camera capture failed\n");
-            }
-
-            display_sos_led_matrix();
-        }
-    }
-
-    return NULL;
-}
-
-void task2_camera_init(void)
-{
-    accident_flag = 0;
-    current_event = ACCIDENT_EVENT_NONE;
-}
-
-void task2_camera_start(void)
-{
-    pthread_create(&camera_thread, NULL, task2_camera_thread_func, NULL);
-}
-
-void task2_camera_trigger(accident_event_t event)
-{
-    pthread_mutex_lock(&camera_mutex);
-    current_event = event;
-    accident_flag = 1;
-    pthread_cond_signal(&camera_cond);
-    pthread_mutex_unlock(&camera_mutex);
 }
