@@ -120,26 +120,22 @@ static void create_scroll_frame(
     }
 }
 
-void trigger_camera_capture(void)
+int trigger_camera_capture(camera_image_t *image)
 {
-    int result = system(
-        "rpicam-still "
-        "--nopreview "
-        "--timeout 10 "
-        "--width 1920 "
-        "--height 1080 "
-        "--awb auto "
-        "--rotation 180 "
-        "--tuning-file "
-        "/usr/share/libcamera/ipa/rpi/vc4/imx219_noir.json "
-        "--output test.jpg"
-    );
-
-    if (result != 0) {
-        fprintf(stderr, "Error: The image was not captured.\n");
+    if (image == NULL) {
+        errno = EINVAL;
+        return -1;
     }
-}
 
+    if (camera_capture_snapshot(image, 1000) != 0) {
+        fprintf(stderr,
+                "Error: camera frame was not captured: %s\n",
+                strerror(errno));
+        return -1;
+    }
+
+    return 0;
+}
 void display_sos_led_matrix(void)
 {
     const struct timespec frame_delay = {
@@ -202,7 +198,15 @@ void *task2_camera_thread_func(void *arg)
         pthread_mutex_unlock(&camera_mutex);
 
         if (event & (ACCIDENT_EVENT_IMPACT | ACCIDENT_EVENT_ROLLOVER)) {
-            trigger_camera_capture();
+            camera_image_t image;
+
+            if (trigger_camera_capture(&image) == 0) {
+                printf("Task 2: camera frame captured: %zu bytes\n",
+                       image.size);
+            } else {
+                fprintf(stderr, "Task 2: camera capture failed\n");
+            }
+
             display_sos_led_matrix();
         }
     }
