@@ -4,12 +4,16 @@
 #include "accident_detection.h"
 #include "task2_camera.h"
 #include "lsm9ds1.h"
+#include "storage.h"
 
+#include <errno.h>
 #include <pthread.h>
 #include <sched.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <time.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -30,6 +34,13 @@ typedef struct
 } imu_task_args_t;
 
 //static sem_t emergency_sem;
+
+/* Timestamp of the sample that triggered the crash, set once by
+ * imu_task and read once by emergency_task before it hands off to
+ * Task 3. Guarded by a mutex since it's a 64-bit value shared across
+ * threads (not safe to read/write unsynchronized on a 32-bit target). */
+static pthread_mutex_t crash_data_mutex = PTHREAD_MUTEX_INITIALIZER;
+static uint64_t g_crash_timestamp_ns = 0;
 
 static void add_nanoseconds(struct timespec* time, long nanoseconds)
 {
@@ -133,8 +144,24 @@ static void* imu_task (void* arg)
         if (event != ACCIDENT_EVENT_NONE)
         {
             int signal_result;
+            int is_first_crash = (detected_events == ACCIDENT_EVENT_NONE);
 
             detected_events = (accident_event_t)(detected_events | event);
+
+            if (is_first_crash)
+            {
+                /* Freeze the ring buffer immediately so it keeps the
+                 * pre-crash window instead of getting overwritten
+                 * while Task 2 spends ~10s on the camera + LED SOS. */
+                pthread_mutex_lock(&crash_data_mutex);
+                g_crash_timestamp_ns = raw_sample.timestamp_ns;
+                pthread_mutex_unlock(&crash_data_mutex);
+
+                if (ioctl(crash_fd, CRASH_BUFFER_IOC_LOCK) < 0)
+                {
+                    fprintf(stderr, "ioctl CRASH_BUFFER_IOC_LOCK failed: %s\n", strerror(errno));
+                }
+            }
 
             signal_result = pthread_kill(emergency_thread, SIGRTMIN);
 
@@ -143,18 +170,12 @@ static void* imu_task (void* arg)
                 fprintf(stderr, "pthread_kill failed: %s\n", strerror(signal_result));
             }
 
-            // ioctl(crash_fd, LOCK_BUFFER);
-
             /*
             if (sem_post(&emergency_sem) < 0)
             {
                 perror("sem_post");
             }
             */
-
-            //ioctl(crash_fd, LOCK_BUFFER);
-            //sem_post(&emergency_sem);
-            
         }
 
         add_nanoseconds(&next_activation, SAMPLE_PERIOD_NS);
@@ -186,6 +207,8 @@ static void* imu_task (void* arg)
 
 static void *emergency_task(void *arg) // ZELJANA
 {
+    (void)arg; /* Suppress unused parameter warning */
+
     sigset_t signal_set;
     int signal_number;
     int result;
@@ -205,11 +228,28 @@ static void *emergency_task(void *arg) // ZELJANA
 
     printf("Task 2 awakened: accident notification received.\n");
 
-    
     trigger_camera_capture();
     display_sos_led_matrix();
 
-    //notify Task 3 
+    /* Task 3: persist the pre-crash telemetry + camera image. */
+    {
+        uint64_t crash_timestamp_ns;
+
+        pthread_mutex_lock(&crash_data_mutex);
+        crash_timestamp_ns = g_crash_timestamp_ns;
+        pthread_mutex_unlock(&crash_data_mutex);
+
+        printf("Task 3: Saving crash data...\n");
+
+        if (storage_task_save_crash_data(crash_timestamp_ns, CAMERA_IMAGE_PATH) != 0)
+        {
+            fprintf(stderr, "Task 3: Failed to save crash data.\n");
+        }
+        else
+        {
+            printf("Task 3: Crash data saved.\n");
+        }
+    }
 
     return NULL;
 }

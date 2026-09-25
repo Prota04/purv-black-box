@@ -1,7 +1,8 @@
 #define _POSIX_C_SOURCE 200809L
 #define _GNU_SOURCE
 
-#include "task3_storage.h"
+#include "uapi.h"
+#include "storage.h"
 #include "uapi.h"
 
 #include <errno.h>
@@ -25,8 +26,8 @@ static int move_file(const char *src, const char *dest);
 
 int storage_task_save_crash_data(uint64_t crash_timestamp_ns, const char *camera_image_path) {
     char crash_dir[MAX_PATH_LEN];
-    char telemetry_path[MAX_PATH_LEN];
-    char image_dest_path[MAX_PATH_LEN];
+    char telemetry_path[MAX_PATH_LEN + 64];
+    char image_dest_path[MAX_PATH_LEN + 64];
     int fd_dev = -1;
     int ret = -1;
     

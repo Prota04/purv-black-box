@@ -183,6 +183,8 @@ void display_sos_led_matrix(void)
 
 void *task2_camera_thread_func(void *arg)
 {
+    (void)arg; /* Suppress unused parameter warning */
+
     struct sched_param param;
     param.sched_priority = 95;
     if (pthread_setschedparam(pthread_self(), SCHED_FIFO, &param) != 0) {
