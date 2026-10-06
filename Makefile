@@ -35,6 +35,7 @@ $(BUFFER_TARGET): tests/crash_buffer_test.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) $^ -o $@
 
 $(BLACK_BOX_TARGET): src/main.c \
+                     src/task1_lsm9ds1.c \
                      src/lsm9ds1.c \
                      src/accident_detection.c \
                      src/task2_camera.c \

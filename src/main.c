@@ -2,6 +2,7 @@
 
 #include "uapi.h"
 #include "accident_detection.h"
+#include "task1_lsm9ds1.h"
 #include "task2_camera.h"
 #include "lsm9ds1.h"
 #include "storage.h"
@@ -22,8 +23,6 @@
 
 #define LSM9DS1_IMU_PRIORITY 99
 #define EMERGENCY_PRIORITY 95
-#define SAMPLE_PERIOD_NS (2L * 1000L * 1000L)
-#define TEST_CYCLES 15000
 
 #define CAMERA_VIDEO_DEVICE "/dev/video0"
 #define CAMERA_SENSOR_SUBDEVICE "/dev/v4l-subdev0"
@@ -36,153 +35,6 @@ static pthread_t emergency_thread;
 static pthread_mutex_t crash_data_mutex = PTHREAD_MUTEX_INITIALIZER;
 static uint64_t g_threshold_timestamp_ns = 0;
 static uint64_t g_detection_timestamp_ns = 0;
-
-typedef struct {
-    int imu_fd;
-    int crash_fd;
-} imu_task_args_t;
-
-static void add_nanoseconds(struct timespec *time_value, long nanoseconds)
-{
-    time_value->tv_nsec += nanoseconds;
-
-    while (time_value->tv_nsec >= 1000000000L) {
-        time_value->tv_sec++;
-        time_value->tv_nsec -= 1000000000L;
-    }
-}
-
-static void *imu_task(void *arg)
-{
-    imu_task_args_t *args = arg;
-    int imu_fd = args->imu_fd;
-    int crash_fd = args->crash_fd;
-    struct timespec next_activation;
-
-    accident_detector_t detector;
-    accident_detection_result_t detection;
-    accident_event_t detected_events = ACCIDENT_EVENT_NONE;
-
-    int i;
-    uint64_t impact_threshold_start_ns = 0;
-
-    accident_detection_init(&detector, 0.0f, 0.0f, 0.0f);
-
-    if (clock_gettime(CLOCK_MONOTONIC, &next_activation) < 0) {
-        perror("clock_gettime");
-        return NULL;
-    }
-
-    for (i = 0; i < TEST_CYCLES; ++i) {
-        lsm9ds1_raw_sample_t raw_sample = {0};
-        lsm9ds1_sample_t sample = {0};
-        accident_event_t event;
-        struct timespec sample_time;
-        ssize_t written;
-        int sleep_result;
-
-        if (lsm9ds1_read_sample(imu_fd, &sample, &raw_sample) < 0) {
-            perror("lsm9ds1_read_sample");
-            break;
-        }
-
-        if (clock_gettime(CLOCK_MONOTONIC, &sample_time) < 0) {
-            perror("clock_gettime");
-            break;
-        }
-
-        raw_sample.timestamp_ns =
-            (__u64)sample_time.tv_sec * 1000000000ULL +
-            (__u64)sample_time.tv_nsec;
-
-        written = write(crash_fd, &raw_sample, sizeof(raw_sample));
-
-        if (written != (ssize_t)sizeof(raw_sample)) {
-            perror("write crash_buffer");
-            break;
-        }
-
-        event = accident_detection_update(&detector, &sample, &detection);
-
-        /* Remember the FIRST sample in the current consecutive >=4G run.
-         * Because IMPACT_REQUIRED_SAMPLES is 2, algorithm detection happens
-         * about one sample period after this threshold timestamp. */
-        if (detection.total_g >= IMPACT_THRESHOLD_G) {
-            if (impact_threshold_start_ns == 0) {
-                impact_threshold_start_ns = raw_sample.timestamp_ns;
-            }
-        } else if (!(detected_events & ACCIDENT_EVENT_IMPACT)) {
-            impact_threshold_start_ns = 0;
-        }
-
-        if (event != ACCIDENT_EVENT_NONE) {
-            int is_first_crash =
-                (detected_events == ACCIDENT_EVENT_NONE);
-
-            detected_events =
-                (accident_event_t)(detected_events | event);
-
-            if (is_first_crash) {
-                int signal_result;
-
-                /* The timestamp of the sample for which the detection
-                 * algorithm declared the accident. */
-                pthread_mutex_lock(&crash_data_mutex);
-                g_detection_timestamp_ns = raw_sample.timestamp_ns;
-                if ((event & ACCIDENT_EVENT_IMPACT) &&
-                    impact_threshold_start_ns != 0) {
-                    g_threshold_timestamp_ns = impact_threshold_start_ns;
-                } else {
-                    /* For rollover-only events there is no >4G threshold, so
-                     * use the algorithm detection time as the latency start. */
-                    g_threshold_timestamp_ns = raw_sample.timestamp_ns;
-                }
-                pthread_mutex_unlock(&crash_data_mutex);
-
-                /* Freeze pre-crash telemetry immediately. */
-                if (ioctl(crash_fd, CRASH_BUFFER_IOC_LOCK) < 0) {
-                    fprintf(stderr,
-                            "ioctl CRASH_BUFFER_IOC_LOCK failed: %s\n",
-                            strerror(errno));
-                }
-
-                /* Wake Task 2 once for the first detected accident. */
-                signal_result = pthread_kill(emergency_thread, SIGRTMIN);
-                if (signal_result != 0) {
-                    fprintf(stderr,
-                            "pthread_kill failed: %s\n",
-                            strerror(signal_result));
-                }
-            }
-        }
-
-        add_nanoseconds(&next_activation, SAMPLE_PERIOD_NS);
-
-        sleep_result = clock_nanosleep(CLOCK_MONOTONIC,
-                                       TIMER_ABSTIME,
-                                       &next_activation,
-                                       NULL);
-
-        if (sleep_result != 0) {
-            fprintf(stderr,
-                    "clock_nanosleep failed: %s\n",
-                    strerror(sleep_result));
-            break;
-        }
-    }
-
-    printf("IMU task finished after %d cycles\n", i);
-
-    if (detected_events & ACCIDENT_EVENT_IMPACT) {
-        printf("Impact detected successfully.\n");
-    }
-
-    if (detected_events & ACCIDENT_EVENT_ROLLOVER) {
-        printf("Rollover detected successfully.\n");
-    }
-
-    return NULL;
-}
 
 static void *emergency_task(void *arg)
 {
@@ -288,7 +140,7 @@ int main(void)
     int imu_fd = -1;
     int camera_enabled = 0;
     sigset_t signal_set;
-    imu_task_args_t imu_args;
+    task1_lsm9ds1_args_t imu_args;
 
     crash_fd = open(CRASH_BUFFER_PATH, O_WRONLY);
     if (crash_fd < 0) {
@@ -367,6 +219,10 @@ int main(void)
 
     imu_args.imu_fd = imu_fd;
     imu_args.crash_fd = crash_fd;
+    imu_args.emergency_thread = emergency_thread;
+    imu_args.crash_data_mutex = &crash_data_mutex;
+    imu_args.threshold_timestamp_ns = &g_threshold_timestamp_ns;
+    imu_args.detection_timestamp_ns = &g_detection_timestamp_ns;
 
     memset(&param, 0, sizeof(param));
     param.sched_priority = LSM9DS1_IMU_PRIORITY;
@@ -374,7 +230,7 @@ int main(void)
 
     result = pthread_create(&imu_thread,
                             &attr,
-                            imu_task,
+                            task1_lsm9ds1,
                             &imu_args);
     if (result != 0) {
         fprintf(stderr,
