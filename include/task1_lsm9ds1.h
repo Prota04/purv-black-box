@@ -11,10 +11,9 @@ typedef struct
     int imu_fd;
     int crash_fd;
 
-    pthread_t emergency_thread;
-
-    pthread_mutex_t *crash_data_mutex;
-    uint64_t *threshold_timestamp_ns;
+    pthread_t task2_camera_thread;
+    
+    uint64_t *latency_start_timestamp_ns;
     uint64_t *detection_timestamp_ns;
 
 } task1_lsm9ds1_args_t;

@@ -31,10 +31,7 @@ static int create_directory(const char *path);
 
 static int write_telemetry_to_file(const char *filepath,
                                    const lsm9ds1_raw_sample_t *data,
-                                   size_t count,
-                                   uint64_t threshold_timestamp_ns,
-                                   uint64_t detection_timestamp_ns,
-                                   const camera_image_t *image);
+                                   size_t count);
 
 static int write_binary_file(const char *filepath,
                              const void *data,
@@ -43,8 +40,38 @@ static int write_binary_file(const char *filepath,
 static int write_praa_color_ppm(const char *filepath,
                                 const camera_image_t *image);
 
-int storage_task_save_crash_data(uint64_t threshold_timestamp_ns,
-                                 uint64_t detection_timestamp_ns,
+void *storage_task(void *arg)
+{
+    storage_task_args_t *args = arg;
+
+    uint64_t detection_timestamp_ns;
+    camera_image_t image;
+    int captured;
+
+    printf("Task 3 is waiting for crash data...\n");
+
+    pthread_mutex_lock(&args->mutex);
+
+        while (!args->data_ready)
+            pthread_cond_wait(&args->condition, &args->mutex);
+
+        detection_timestamp_ns = args->detection_timestamp_ns;
+        captured = args->captured;
+        image = args->image;
+
+    pthread_mutex_unlock(&args->mutex);
+
+    printf("Task 3 awakened: saving crash data...\n");
+
+    if (storage_task_save_crash_data(detection_timestamp_ns, captured ? &image : NULL) != 0)
+        fprintf(stderr, "Task 3: Failed to save crash data.\n");
+    else
+        printf("Task 3: Crash data saved.\n");
+
+    return NULL;
+}
+
+int storage_task_save_crash_data(uint64_t detection_timestamp_ns,
                                  const camera_image_t *image)
 {
     char telemetry_path[MAX_PATH_LEN + 64];
@@ -129,10 +156,7 @@ int storage_task_save_crash_data(uint64_t threshold_timestamp_ns,
 
     if (write_telemetry_to_file(telemetry_path,
                                 buffer_data,
-                                sample_count,
-                                threshold_timestamp_ns,
-                                detection_timestamp_ns,
-                                image) != 0) {
+                                sample_count) != 0) {
         fprintf(stderr,
                 "Task 3: Failed to write telemetry file.\n");
         goto cleanup;
@@ -222,18 +246,15 @@ static int create_directory(const char *path)
         return -1;
     }
 
-    chown(crash_dir, 1000, 1000);
-    chmod(crash_dir, 0755);
+    chown(path, 1000, 1000);
+    chmod(path, 0755);
 
     return 0;
 }
 
 static int write_telemetry_to_file(const char *filepath,
                                    const lsm9ds1_raw_sample_t *data,
-                                   size_t count,
-                                   uint64_t threshold_timestamp_ns,
-                                   uint64_t detection_timestamp_ns,
-                                   const camera_image_t *image)
+                                   size_t count)
 {
     FILE *fp;
     float max_g = 0.0f;
@@ -262,65 +283,6 @@ static int write_telemetry_to_file(const char *filepath,
             count / 500.0);
     fprintf(fp, "Max total acceleration: %.3f g\n\n", max_g);
 
-    fprintf(fp, "=== LATENCY ===\n");
-    fprintf(fp,
-            "threshold_timestamp_ns=%llu\n",
-            (unsigned long long)threshold_timestamp_ns);
-    fprintf(fp,
-            "algorithm_detection_timestamp_ns=%llu\n",
-            (unsigned long long)detection_timestamp_ns);
-
-    if (image != NULL && image->first_byte_timestamp_ns != 0) {
-        fprintf(fp,
-                "camera_first_byte_timestamp_ns=%llu\n",
-                (unsigned long long)image->first_byte_timestamp_ns);
-
-        if (image->first_byte_timestamp_ns >= threshold_timestamp_ns) {
-            uint64_t latency_ns =
-                image->first_byte_timestamp_ns - threshold_timestamp_ns;
-
-            fprintf(fp,
-                    "threshold_to_camera_buffer_latency_ns=%llu\n",
-                    (unsigned long long)latency_ns);
-            fprintf(fp,
-                    "threshold_to_camera_buffer_latency_ms=%.3f\n",
-                    (double)latency_ns / 1000000.0);
-        } else {
-            fprintf(fp,
-                    "threshold_to_camera_buffer_latency_ns=invalid_clock_mismatch\n");
-        }
-
-        if (image->first_byte_timestamp_ns >= detection_timestamp_ns) {
-            uint64_t latency_ns =
-                image->first_byte_timestamp_ns - detection_timestamp_ns;
-
-            fprintf(fp,
-                    "detection_to_camera_buffer_latency_ns=%llu\n",
-                    (unsigned long long)latency_ns);
-            fprintf(fp,
-                    "detection_to_camera_buffer_latency_ms=%.3f\n",
-                    (double)latency_ns / 1000000.0);
-        }
-
-        if (image->frame_timestamp_ns != 0) {
-            fprintf(fp,
-                    "v4l2_frame_timestamp_ns=%llu\n",
-                    (unsigned long long)image->frame_timestamp_ns);
-        }
-
-        fprintf(fp, "camera_width=%u\n", image->width);
-        fprintf(fp, "camera_height=%u\n", image->height);
-        fprintf(fp, "camera_bytesperline=%u\n", image->bytesperline);
-        fprintf(fp,
-                "camera_fourcc=%c%c%c%c\n",
-                image->pixelformat & 0xff,
-                (image->pixelformat >> 8) & 0xff,
-                (image->pixelformat >> 16) & 0xff,
-                (image->pixelformat >> 24) & 0xff);
-        fprintf(fp, "camera_frame_bytes=%zu\n", image->size);
-    } else {
-        fprintf(fp, "camera_first_byte_timestamp_ns=not_available\n");
-    }
 
     fprintf(fp, "\n=== SENSOR HISTORY ===\n");
     fprintf(fp,

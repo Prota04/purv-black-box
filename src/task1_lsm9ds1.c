@@ -53,6 +53,7 @@ void *task1_lsm9ds1(void *arg)
     accident_detection_result_t detection;
 
     uint64_t impact_threshold_start_ns = 0;
+    uint64_t rollover_threshold_start_ns = 0;
 
     accident_detection_init(&detector, 0.0f, 0.0f, 0.0f);
 
@@ -111,26 +112,30 @@ void *task1_lsm9ds1(void *arg)
         else
             impact_threshold_start_ns = 0;
 
+
+        if (detection.tilt_deg >= ROLLOVER_ANGLE_DEG)
+        {
+            if (rollover_threshold_start_ns == 0)
+                rollover_threshold_start_ns = raw_sample.timestamp_ns;
+        }
+        else
+            rollover_threshold_start_ns = 0;
+
         // Accident detected and confirmed.
         if (event != ACCIDENT_EVENT_NONE) 
         {
 
             int signal_result;
 
-            // Protect the shared timestamps while Task 1 updates them.
-            pthread_mutex_lock(args->crash_data_mutex);
+            *args->detection_timestamp_ns = raw_sample.timestamp_ns;
 
-                // Store the timestamp at which the accident was confirmed by the detection algorithm.
-                *args -> detection_timestamp_ns = raw_sample.timestamp_ns;
-
-                // For an impact, latency measurement starts at the first sample >= 4G.
-                // For a rollover, the detection timestamp itself is used as the start time.
-                if ((event & ACCIDENT_EVENT_IMPACT) && impact_threshold_start_ns != 0)
-                    *args->threshold_timestamp_ns = impact_threshold_start_ns;
-                else
-                    *args->threshold_timestamp_ns = raw_sample.timestamp_ns;
-
-            pthread_mutex_unlock(args->crash_data_mutex);
+            if ((event & ACCIDENT_EVENT_IMPACT) && impact_threshold_start_ns != 0)
+                *args->latency_start_timestamp_ns = impact_threshold_start_ns;
+            else if ((event & ACCIDENT_EVENT_ROLLOVER) && rollover_threshold_start_ns != 0)
+                *args->latency_start_timestamp_ns = rollover_threshold_start_ns;
+            else
+                *args->latency_start_timestamp_ns = raw_sample.timestamp_ns;
+            
 
             // Freeze the kernel ring buffer to prevent the 5 seconds
             // of pre-accident data from being overwritten.
@@ -138,7 +143,7 @@ void *task1_lsm9ds1(void *arg)
                 fprintf(stderr, "ioctl CRASH_BUFFER_IOC_LOCK failed: %s\n", strerror(errno));
 
             // Wake up Task 2 to activate the camera and SOS signal.
-            signal_result = pthread_kill(args->emergency_thread, SIGRTMIN);
+            signal_result = pthread_kill(args->task2_camera_thread, SIGRTMIN);
             if (signal_result != 0)
                 fprintf(stderr, "pthread_kill failed: %s\n", strerror(signal_result));
             

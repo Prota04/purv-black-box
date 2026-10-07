@@ -9,6 +9,9 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include "storage.h"
+#include <pthread.h>
+#include <signal.h>
 
 #define MATRIX_WIDTH 8
 #define MATRIX_HEIGHT 8
@@ -139,7 +142,8 @@ int trigger_camera_capture(camera_image_t *image)
 
 void display_sos_led_matrix(void)
 {
-    const struct timespec frame_delay = {
+    const struct timespec frame_delay = 
+    {
         .tv_sec = 0,
         .tv_nsec = 150L * 1000L * 1000L
     };
@@ -148,25 +152,21 @@ void display_sos_led_matrix(void)
     int framebuffer;
     int message_x;
 
-    framebuffer = open_sense_hat_framebuffer(framebuffer_path,
-                                             sizeof(framebuffer_path));
+    framebuffer = open_sense_hat_framebuffer(framebuffer_path, sizeof(framebuffer_path));
 
-    if (framebuffer < 0) {
-        fprintf(stderr,
-                "Could not find the Sense HAT framebuffer: %s\n",
-                strerror(errno));
+    if (framebuffer < 0) 
+    {
+        fprintf(stderr, "Could not find the Sense HAT framebuffer: %s\n", strerror(errno));
         return;
     }
 
-    for (message_x = MATRIX_WIDTH;
-         message_x >= -MESSAGE_WIDTH;
-         --message_x) {
+    for (message_x = MATRIX_WIDTH; message_x >= -MESSAGE_WIDTH; --message_x) 
+    {
         create_scroll_frame(pixels, message_x);
 
-        if (write_frame(framebuffer, pixels) < 0) {
-            fprintf(stderr,
-                    "LED write failed: %s\n",
-                    strerror(errno));
+        if (write_frame(framebuffer, pixels) < 0) 
+        {
+            fprintf(stderr, "LED write failed: %s\n", strerror(errno));
             close(framebuffer);
             return;
         }
@@ -177,4 +177,89 @@ void display_sos_led_matrix(void)
     memset(pixels, 0, sizeof(pixels));
     (void)write_frame(framebuffer, pixels);
     close(framebuffer);
+}
+
+void *task2_camera(void *arg)
+{
+    uint64_t detection_timestamp_ns;
+    task2_camera_args_t *args = arg;
+
+    sigset_t signal_set;
+    int signal_number;
+    int result;
+    uint64_t latency_start_timestamp_ns;
+    camera_image_t image;
+    int captured;
+
+    sigemptyset(&signal_set);
+    sigaddset(&signal_set, SIGRTMIN);
+
+    printf("Task 2 is waiting for an accident...\n");
+
+    result = sigwait(&signal_set, &signal_number);
+    if (result != 0) 
+    {
+        fprintf(stderr, "sigwait failed: %s\n", strerror(result));
+        return NULL;
+    }
+    printf("Task 2 awakened: accident notification received.\n");
+
+    latency_start_timestamp_ns = *args->latency_start_timestamp_ns;
+    detection_timestamp_ns = *args->detection_timestamp_ns;
+
+    memset(&image, 0, sizeof(image));
+
+    /* Camera has already been streaming since main(). This requests the NEXT
+     * fresh completed frame; it does not start or initialise the camera now. */
+    captured = (trigger_camera_capture(&image) == 0);
+
+    if (captured) 
+    {
+        printf("Task 2: fresh camera frame copied to secure buffer: %zu bytes\n", image.size);
+
+        if (image.first_byte_timestamp_ns >= latency_start_timestamp_ns) 
+        {
+
+            uint64_t latency_ns = image.first_byte_timestamp_ns - latency_start_timestamp_ns;
+
+            printf("Task 2: accident-to-first-image-byte latency = "
+                    "%llu ns (%.3f ms)\n",
+                    (unsigned long long)latency_ns,
+                    (double)latency_ns / 1000000.0);
+        } 
+        else 
+            fprintf(stderr, "Task 2: invalid camera latency timestamp.\n");
+    } 
+    else
+        fprintf(stderr, "Task 2: camera capture failed.\n");
+
+    pthread_mutex_lock(&args->storage_args->mutex);
+
+    args->storage_args->detection_timestamp_ns =
+        detection_timestamp_ns;
+
+    args->storage_args->captured =
+        captured;
+
+    if (captured)
+    {
+        args->storage_args->image = image;
+    }
+    else
+    {
+        memset(&args->storage_args->image,
+            0,
+            sizeof(args->storage_args->image));
+    }
+
+    args->storage_args->data_ready = 1;
+
+    pthread_cond_signal(&args->storage_args->condition);
+
+    pthread_mutex_unlock(&args->storage_args->mutex);
+
+    display_sos_led_matrix();
+
+    return NULL;
+
 }
